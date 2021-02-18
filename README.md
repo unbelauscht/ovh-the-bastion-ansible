@@ -14,5 +14,5 @@ $ ansible-playbook --version
 
 ```
 $ python --version
-Python 3.8.5
+  Python 3.8.5
 ```
