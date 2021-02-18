@@ -1,0 +1,10 @@
+---
+- hosts:
+    - main
+    - replica
+  gather_facts: yes
+  become: true
+
+  roles:
+    - set_hostname
+    - install_ovh_bastion

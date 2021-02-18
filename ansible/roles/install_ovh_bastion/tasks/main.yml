@@ -1,0 +1,150 @@
+- name: update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: get information about installed version
+  ansible.builtin.shell:
+    cmd: git -C /opt/bastion describe --exact-match --tags $(git log -n1 --pretty='%h')
+  register: installed_bastion_version
+  ignore_errors: yes
+
+- name: get updateable packages
+  ansible.builtin.command:
+    cmd: /usr/lib/update-notifier/apt-check --package-names
+  register: packages
+
+- name: update machine
+  ansible.builtin.apt:
+    upgrade: dist
+    update_cache: yes
+  when: packages.stderr != ""
+
+- name: reboot machine
+  ansible.builtin.reboot:
+    reboot_timeout: 3600
+  when: packages.stderr != ""
+
+- name: git clone
+  ansible.builtin.git:
+    repo: 'https://github.com/ovh/the-bastion'
+    dest: /opt/bastion
+    version: "{{ bastion.version }}"
+  when:
+    - installed_bastion_version.rc == 128
+    - installed_bastion_version.stdout != bastion.version
+
+- name: install ovh-ttyrec
+  ansible.builtin.command:
+    cmd: /opt/bastion/bin/admin/install-ttyrec.sh -a
+  when: installed_bastion_version.rc == 128
+
+- name: install dependencies
+  ansible.builtin.command:
+    cmd: /opt/bastion/bin/admin/packages-check.sh -i -s -t
+  when: installed_bastion_version.rc == 128
+
+- name: verify dependencies
+  ansible.builtin.command:
+    cmd: /opt/bastion/bin/dev/perl-check.sh
+  when: installed_bastion_version.rc == 128
+
+- name: install bastion
+  ansible.builtin.command:
+    cmd: /opt/bastion/bin/admin/install --new-install
+  when: installed_bastion_version.rc == 128
+
+- name: upgrade bastion
+  ansible.builtin.command:
+    cmd: /opt/bastion/bin/admin/install --upgrade
+  when: 
+    - installed_bastion_version.stdout != bastion.version
+    - installed_bastion_version.rc != 128
+
+- name: get all ssh_host_keys from main node
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  register: main_host_keys
+  loop:
+    - /etc/ssh/ssh_host_dsa_key.pub
+    - /etc/ssh/ssh_host_ecdsa_key.pub
+    - /etc/ssh/ssh_host_ed25519_key
+    - /etc/ssh/ssh_host_ed25519_key.pub
+    - /etc/ssh/ssh_host_ecdsa_key
+    - /etc/ssh/ssh_host_dsa_key
+    - /etc/ssh/ssh_host_rsa_key.pub
+    - /etc/ssh/ssh_host_rsa_key
+  when: bastion.role == 'main'
+
+- name: copy all ssh_host_keys to replicas
+  ansible.builtin.copy:
+    content: "{{ item['content'] | b64decode }}"
+    dest: "{{ item['source'] }}"
+  loop: "{{ hostvars[groups['all'][0]].main_host_keys['results'] }}"
+  when: bastion.role == 'replica'
+  register: replica_ssh_host_keys
+
+- name: restart ssh replicas in case ssh_host_keys changed
+  ansible.builtin.service:
+    name: ssh
+    state: restarted
+  when:
+    - replica_ssh_host_keys.changed
+    - bastion.role == 'replica'
+
+- name: set bastion name
+  ansible.builtin.lineinfile:
+    path: /etc/bastion/bastion.conf
+    regexp: '^"bastionName"'
+    line: '"bastionName": "{{ bastion.name }}",'
+
+- name: enable readOnlySlaveMode
+  ansible.builtin.lineinfile:
+    path: /etc/bastion/bastion.conf
+    regexp: '^"readOnlySlaveMode"'
+    line: '"readOnlySlaveMode": true,'
+  when: bastion.role == 'replica'
+
+- name: get main node pubkey
+  ansible.builtin.slurp:
+    src: /root/.ssh/id_master2slave.pub
+  register: main_node_pubkey
+  when: bastion.role == 'main'
+
+- name: save main nodes pubkey in ~bastionsync/.ssh/authorized_keys
+  ansible.builtin.template:
+    src: replica/home/bastionsync/.ssh/authorized_keys.j2
+    dest: /home/bastionsync/.ssh/authorized_keys
+    owner: bastionsync
+    group: bastionsync
+    mode: '0600'
+  when: bastion.role == 'replica'
+
+- name: configure osh-sync-watcher
+  ansible.builtin.template:
+    src: main/etc/bastion/osh-sync-watcher.sh.j2
+    dest: /etc/bastion/osh-sync-watcher.sh
+    owner: root
+    group: root
+    mode: '0644'
+  when: bastion.role == 'main'
+
+- name: get replica ssh hostkey on main node
+  ansible.builtin.command:
+    cmd: ssh-keyscan -H "{{ item }}"
+  when: bastion.role == 'main'
+  with_items: "{{ groups['replica'] }}"
+  register: replica_ssh_pubkey
+
+- name: save replica ssh hostkey on main node
+  ansible.builtin.copy:
+    content: "{{ item.stdout }}"
+    dest: /root/.ssh/known_hosts
+  when: bastion.role == 'main'
+  loop: "{{ replica_ssh_pubkey.results }}"
+
+- name: enable osh-sync-watcher
+  ansible.builtin.service:
+    name: osh-sync-watcher
+    state: restarted
+    enabled: yes
+  when: bastion.role == 'main'

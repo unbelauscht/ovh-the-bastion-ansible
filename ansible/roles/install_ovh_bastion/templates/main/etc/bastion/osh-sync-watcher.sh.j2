@@ -1,0 +1,9 @@
+### managed by ansible ###
+
+timeout=120
+rshcmd="ssh -q -i /root/.ssh/id_master2slave"
+remoteuser=bastionsync
+remotehostlist={% for host in groups['replica'] %}{{ host }}{% if not loop.last %},{% endif %}{% endfor %}
+
+enabled=1
+syslog=local6
