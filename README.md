@@ -1,5 +1,5 @@
 # ovh-the-bastion-ansible
-Ansible role to setup master and replica
+Ansible role for Ubuntu and similar systems.
 
 You can use this repository to quickly setup a HA replicated [ovh/the-bastion](https://github.com/ovh/the-bastion) setup.
 
