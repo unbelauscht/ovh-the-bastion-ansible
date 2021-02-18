@@ -2,11 +2,17 @@
   ansible.builtin.apt:
     update_cache: yes
 
+# BEGIN
+# installed_bastion_version serves multiple purposes:
+# - detecting whether the bastion is already in place (if not rc == 128)
+# - detect it's version based on the git tag (.stdout will have git tag)
 - name: get information about installed version
   ansible.builtin.shell:
     cmd: git -C /opt/bastion describe --exact-match --tags $(git log -n1 --pretty='%h')
   register: installed_bastion_version
   ignore_errors: yes
+
+# END
 
 - name: get updateable packages
   ansible.builtin.command:
@@ -60,6 +66,8 @@
     - installed_bastion_version.stdout != bastion.version
     - installed_bastion_version.rc != 128
 
+# BEGIN: to use bastions in a round robin DNS way
+
 - name: get all ssh_host_keys from main node
   ansible.builtin.slurp:
     src: "{{ item }}"
@@ -91,11 +99,15 @@
     - replica_ssh_host_keys.changed
     - bastion.role == 'replica'
 
+# END: to use bastions in a round robin DNS way
+
 - name: set bastion name
   ansible.builtin.lineinfile:
     path: /etc/bastion/bastion.conf
     regexp: '^"bastionName"'
     line: '"bastionName": "{{ bastion.name }}",'
+
+# BEGIN: this is required to setup replication main -> replica
 
 - name: enable readOnlySlaveMode
   ansible.builtin.lineinfile:
@@ -148,3 +160,4 @@
     state: restarted
     enabled: yes
   when: bastion.role == 'main'
+# END: this is required to setup replication main -> replica
