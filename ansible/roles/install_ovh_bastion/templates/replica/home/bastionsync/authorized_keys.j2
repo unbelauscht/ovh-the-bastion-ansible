@@ -1,1 +1,3 @@
+### managed by ansible ###
+
 from="{{ bastion.replicates }}",restrict {{ hostvars[groups['all'][0]].main_node_pubkey.content | b64decode }}
